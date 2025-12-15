@@ -14,6 +14,7 @@ _config = {
     # rules
     'product': {},
     'rules': set(),
+    'rules_by_path': {},
 
     # file & dir
     'log': 'log.txt',
@@ -35,6 +36,7 @@ def get_config(args=None):
             product, path, val = line.split(',')
             _config['rules'].add(Rule(product, path, val))
             _config['product'][product] = product
+            _config['rules_by_path'].setdefault(path, []).append(Rule(product, path, val))
 
     # 组装命令行获取的参数值
     if args:

@@ -63,31 +63,37 @@ class Core:
         """
         items = target.split(':')
         ip = items[0]
-        ports = [items[1], ] if len(items) > 1 else self.config.ports
+        ports = [items[1]] if len(items) > 1 else self.config.ports
+        ports = [str(p) for p in ports]
 
-        # 存活检测 (是否有必要)
-
-        # 端口扫描
-        for port in ports:
+        def handle_port(port):
             if port_scan(ip, port, self.config.timeout):
                 logger.info(f"{ip} port {port} is open")
-                # 指纹
                 if product := fingerprint(ip, port, self.config):
                     logger.info(f"{ip}:{port} is {product}")
-                    verified = False
-                    # poc verify & exploit
-                    for poc in self.poc_dict[product]:
+                    verified = []
+
+                    def run_poc(poc):
                         if results := poc.verify(ip, port):
-                            verified = True
-                            # found 加 1
+                            verified.append(True)
                             self.data.add_found()
-                            # 将验证成功的 poc 记录到 config.vulnerable 中
                             self.data.add_vulnerable(results[:6])
-                            # snapshot
                             if not self.config.disable_snapshot:
                                 self.snapshot_pipeline.put((poc.exploit, results))
+
+                    poc_pool = geventPool(min(len(self.poc_dict[product]), self.config.th_num))
+                    for poc in self.poc_dict[product]:
+                        poc_pool.spawn(run_poc, poc)
+                    poc_pool.join()
+
                     if not verified:
-                        self.data.add_not_vulnerable([ip, str(port), product])
+                        self.data.add_not_vulnerable([ip, port, product])
+
+        port_pool = geventPool(min(len(ports), self.config.th_num))
+        for port in ports:
+            port_pool.spawn(handle_port, port)
+        port_pool.join()
+
         self.data.add_done()
         self.data.record_running_state()
 
@@ -108,7 +114,7 @@ class Core:
             #     pool.map(self._scan, self.data.ip_generator)
             scan_pool = geventPool(self.config.th_num)
             for ip in self.data.ip_generator:
-                scan_pool.start(gevent.spawn(self._scan, ip))
+                scan_pool.spawn(self._scan, ip)
             scan_pool.join()
 
             # self.snapshot_pipeline_thread.join()
@@ -121,3 +127,4 @@ class Core:
 
         except Exception as e:
             logger.error(e)
+
