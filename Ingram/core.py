@@ -89,10 +89,10 @@ class Core:
                     if not verified:
                         self.data.add_not_vulnerable([ip, port, product])
 
-        port_pool = geventPool(min(len(ports), self.config.th_num))
+        # 避免嵌套协程池导致端口扫描并发数过高，从而触发 "too many open files"
+        # 此处按顺序扫描当前 IP 的端口，并由外层 gevent 池负责整体并发控制
         for port in ports:
-            port_pool.spawn(handle_port, port)
-        port_pool.join()
+            handle_port(port)
 
         self.data.add_done()
         self.data.record_running_state()

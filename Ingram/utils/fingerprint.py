@@ -39,20 +39,30 @@ def _parse(req, rule_val):
 
 def fingerprint(ip, port, config):
     req_dict = {}  # 暂存 requests 的返回值
+    responses_to_close = []
     session = requests.session()
     headers = {'Connection': 'close', 'User-Agent': config.user_agent}
 
-    for path, rules in config.rules_by_path.items():
-        try:
-            req = req_dict.get(path)
-            if req is None:
-                req = session.get(f"http://{ip}:{port}{path}", headers=headers, timeout=config.timeout)
-                if req.status_code == 200:
-                    req_dict[path] = req
+    try:
+        for path, rules in config.rules_by_path.items():
+            try:
+                req = req_dict.get(path)
+                if req is None:
+                    req = session.get(f"http://{ip}:{port}{path}", headers=headers, timeout=config.timeout)
+                    responses_to_close.append(req)
+                    if req.status_code == 200:
+                        req_dict[path] = req
 
-            for rule in rules:
-                if _parse(req, rule.val):
-                    return rule.product
-        except Exception as e:
-            logger.error(e)
-    return None
+                for rule in rules:
+                    if _parse(req, rule.val):
+                        return rule.product
+            except Exception as e:
+                logger.error(e)
+        return None
+    finally:
+        for resp in responses_to_close:
+            try:
+                resp.close()
+            except Exception:
+                pass
+        session.close()
