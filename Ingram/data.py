@@ -3,7 +3,7 @@ import hashlib
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
-from queue import Queue
+from queue import Empty, Queue
 from threading import Lock, RLock, Thread
 
 from loguru import logger
@@ -186,9 +186,15 @@ class SnapshotPipeline:
             self.task_count -= 1
 
     def process(self, core):
-        while not core.finish():
-            exploit_func, results = self.get()
-            self.workers.submit(self._snapshot, exploit_func, results)
+        while True:
+            try:
+                exploit_func, results = self.pipeline.get(timeout=0.5)
+            except Empty:
+                if core.finish():
+                    break
+                continue
+
             with self.task_count_lock:
                 self.task_count += 1
-            time.sleep(.1)
+            self.workers.submit(self._snapshot, exploit_func, results)
+
