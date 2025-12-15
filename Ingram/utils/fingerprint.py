@@ -1,10 +1,29 @@
 """根据指纹给出目标产品信息"""
 import hashlib
 import re
+import threading
+
 import requests
 
 from loguru import logger
 from lxml import etree
+
+_session_local = threading.local()
+
+
+def _get_session(config):
+    """Reuse a session per-thread to speed up fingerprinting HTTP calls."""
+    session = getattr(_session_local, 'session', None)
+    if session is None:
+        session = requests.session()
+        adapter = requests.adapters.HTTPAdapter(
+            pool_connections=max(4, config.th_num),
+            pool_maxsize=max(8, config.th_num * 2),
+        )
+        session.mount('http://', adapter)
+        session.headers.update({'User-Agent': config.user_agent})
+        _session_local.session = session
+    return session
 
 
 def _build_response_context(req):
@@ -71,13 +90,8 @@ def _parse(req, rule_val, context):
 def fingerprint(ip, port, config):
     req_dict = {}  # 暂存 requests 的返回值
     responses_to_close = []
-    session = requests.session()
-    adapter = requests.adapters.HTTPAdapter(
-        pool_connections=config.th_num,
-        pool_maxsize=config.th_num * 2,
-    )
-    session.mount('http://', adapter)
-    headers = {'Connection': 'close', 'User-Agent': config.user_agent}
+    session = _get_session(config)
+    headers = {'Connection': 'keep-alive', 'User-Agent': config.user_agent}
 
     try:
         for path, rules in config.rules_by_path.items():
@@ -104,4 +118,5 @@ def fingerprint(ip, port, config):
                 resp.close()
             except Exception:
                 pass
-        session.close()
+        # keep the session open for reuse by the worker thread
+

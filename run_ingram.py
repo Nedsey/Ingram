@@ -6,7 +6,6 @@
 
 #=================== 需放置于最开头 ====================
 import warnings; warnings.filterwarnings("ignore")
-from gevent import monkey; monkey.patch_all(thread=False)
 #======================================================
 
 import os
