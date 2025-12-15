@@ -1,10 +1,9 @@
 import os
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Thread
 
-import gevent
 from loguru import logger
-from gevent.pool import Pool as geventPool
 
 from .data import Data, SnapshotPipeline
 from .pocs import get_poc_dict
@@ -81,16 +80,21 @@ class Core:
                             if not self.config.disable_snapshot:
                                 self.snapshot_pipeline.put((poc.exploit, results))
 
-                    poc_pool = geventPool(min(len(self.poc_dict[product]), self.config.th_num))
-                    for poc in self.poc_dict[product]:
-                        poc_pool.spawn(run_poc, poc)
-                    poc_pool.join()
+                    with ThreadPoolExecutor(
+                        max_workers=min(len(self.poc_dict[product]), self.config.th_num)
+                    ) as poc_pool:
+                        futures = [
+                            poc_pool.submit(run_poc, poc)
+                            for poc in self.poc_dict[product]
+                        ]
+                        for future in as_completed(futures):
+                            future.result()
 
                     if not verified:
                         self.data.add_not_vulnerable([ip, port, product])
 
-        # 避免嵌套协程池导致端口扫描并发数过高，从而触发 "too many open files"
-        # 此处按顺序扫描当前 IP 的端口，并由外层 gevent 池负责整体并发控制
+        # 避免在单个 IP 上同时并发太多端口扫描导致 "too many open files"
+        # 此处按顺序扫描当前 IP 的端口，并由外层线程池负责整体并发控制
         for port in ports:
             handle_port(port)
 
@@ -110,12 +114,10 @@ class Core:
                 self.snapshot_pipeline_thread = Thread(target=self.snapshot_pipeline.process, args=[self, ], daemon=True)
                 self.snapshot_pipeline_thread.start()
             # 扫描
-            # with common.IngramThreadPool(self.config.th_num) as pool:
-            #     pool.map(self._scan, self.data.ip_generator)
-            scan_pool = geventPool(self.config.th_num)
-            for ip in self.data.ip_generator:
-                scan_pool.spawn(self._scan, ip)
-            scan_pool.join()
+            with ThreadPoolExecutor(max_workers=self.config.th_num) as scan_pool:
+                futures = [scan_pool.submit(self._scan, ip) for ip in self.data.ip_generator]
+                for future in as_completed(futures):
+                    future.result()
 
             # self.snapshot_pipeline_thread.join()
             self.status_bar_thread.join()
